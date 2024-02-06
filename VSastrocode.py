@@ -73,3 +73,19 @@ testdata = [[0, 0, 1, 2, 5, 1.1, 0], [2, 1, 3, 0, 0, 0.9], [2, 0, 1]]
 # Apply the mask function
 test1 = mask(testdata, 1)
 #%%
+
+#converting to flux
+#from header we see gain is 3.1, lab dude said flux = counts*gain/sattime
+gain = 3.1
+x_time = 720
+
+def flux(data, x_time, gain):
+    flux = data*gain/x_time
+    return flux
+#%%
+
+# Crop horizontally by slicing all rows, but only columns from 120 to -120
+pixelvalues_cropped_horizontally = pixelvalues[:, 120:-120]
+
+# Crop vertically by slicing only rows from 110 to -110, keeping all columns
+pixelvalues_cropped = pixelvalues_cropped_horizontally[110:-110, :]
