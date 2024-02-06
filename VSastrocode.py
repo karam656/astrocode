@@ -71,5 +71,5 @@ testdata = [[0, 0, 1, 2, 5, 1.1, 0], [2, 1, 3, 0, 0, 0.9], [2, 0, 1]]
 
 
 # Apply the mask function
-test1 = mask(testdata, 1
+test1 = mask(testdata, 1)
 #%%
