@@ -45,3 +45,58 @@ cutoff = mean_estimate
 area = 1900
 
 skimmyging(data, mean_estimate, area)
+#%%
+# I want to go back to the og data without the hot stuff
+def skimmyging_with_change_indicator(data, cutoff, area):
+    # Apply the mask to identify bright sources
+    pixelvalues_cropped_01 = mask(data, cutoff)
+    
+    # Label the objects in the masked image
+    label_image, num_features = measure.label(pixelvalues_cropped_01, background=0, return_num=True)
+    
+    # Initialize the change indicator array with zeros
+    change_indicator = np.zeros(data.shape, dtype=int)
+    
+    # Measure properties of labeled objects
+    regions = measure.regionprops(label_image)
+
+    for region in regions:
+        if region.area >= area:
+            for coordinates in region.coords:
+                # Set pixels of this region to 0 in the original data
+                data[coordinates[0], coordinates[1]] = 0
+                # Mark the change in the change indicator array
+                change_indicator[coordinates[0], coordinates[1]] = 1
+
+    # Optionally, you can visualize the change_indicator array
+    plt.imshow(change_indicator, cmap='gray')
+    # plt.show()
+
+    return data, change_indicator
+
+skim_data, change_indicator = skimmyging_with_change_indicator(pixelvalues_cropped, mean_estimate +3*std, 1850)
+
+#%%
+def compare(data, indicator):
+    
+    for i in range(len(data)):
+        for j in range(len(data[i])):
+            if indicator[i][j]==1:
+                data[i][j] = 0
+    return data
+
+no_blooming_bg = compare(pixelvalues_cropped, change_indicator)
+#plotting this isn't too nice
+#%%
+#trying to save to a fits file to 
+hdu = fits.PrimaryHDU(no_blooming_bg)
+
+# Create a HDUList to contain the HDU
+hdulist = fits.HDUList([hdu])
+
+# Define the name of the FITS file
+filename = 'no_blooming_bg.fits'
+
+# Write the HDUList to a new FITS file
+hdulist.writeto(filename, overwrite=True)
+#this plot looks pretty good
