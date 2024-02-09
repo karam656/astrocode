@@ -193,7 +193,7 @@ noBloomValues = noBloomBack[0].data
 # %%
 
 # take a snapshot for now, for simplicity
-reducedImage  = noBloomValues[:200, :200]
+reducedImage  = noBloomValues
 
 # threshold to remove background, identify indicies where this is true
 indicesReduce = reducedImage > mu + 3 * std
@@ -300,5 +300,122 @@ plt.imshow(cleanBackOnly)
 
 # %%
 
+def medianBack(matrix, feature_value=0, annulus_width=12):
+    # Label connected components of features
+    labeled_features = measure.label(matrix == feature_value)
 
+    # Calculate the median value for each feature
+    medians = []
+    for props in measure.regionprops(labeled_features):
+        # Get the bounding box coordinates for the current feature
+        min_row, min_col, max_row, max_col = props.bbox
+
+        # Expand the bounding box to form an annulus with a width of annulus_width
+        min_row = max(0, min_row - annulus_width // 2)
+        max_row = min(matrix.shape[0], max_row + annulus_width // 2)
+        min_col = max(0, min_col - annulus_width // 2)
+        max_col = min(matrix.shape[1], max_col + annulus_width // 2)
+
+        # Extract values within the annulus window
+        annulus_values = matrix[min_row:max_row, min_col:max_col].flatten()
+
+        nonZero = annulus_values > 0
+
+        medianMetrics = annulus_values[nonZero]
+
+        # Calculate the median of the annulus values and append to the list
+        medians.append(np.median(medianMetrics))
+
+    return medians
+
+ #%%
+
+medianBackground = medianBack(cleanBackOnly, feature_value=0, annulus_width=12)
+
+# %%
+
+def magDetermine(matrix, median_values, threshold):
+    # Create a copy of the input matrix to avoid modifying the original data
+    matrix_copy = np.copy(matrix).astype(float)
+
+    # Label connected components of features based on the condition
+    labeled_features = measure.label(matrix > threshold)
+
+    # Subtract the corresponding median value from each feature region
+    for props, median_value in zip(measure.regionprops(labeled_features), median_values):
+        # Get the bounding box coordinates for the current feature
+        min_row, min_col, max_row, max_col = props.bbox
+
+        # Subtract the median value from the feature region
+        matrix_copy[min_row:max_row, min_col:max_col][labeled_features[min_row:max_row, min_col:max_col] == props.label] -= median_value
+
+    return matrix_copy
+
+ #%%
+
+finalMags = magDetermine(cleanBackGalaxy, medianBackground, mu + 3 * std)
+
+
+# %%
+
+
+def FinalClearance(matrix, threshold=1000):
+    # Label connected components of features
+    labeled_features = measure.label(matrix != 0)
+
+    # Calculate maximum value within each feature
+    max_values = []
+    for props in measure.regionprops(labeled_features):
+        max_value = np.max(matrix[props.coords[:, 0], props.coords[:, 1]])
+        max_values.append(max_value)
+
+    max_values = np.array(max_values)
+
+    # Find features with maximum value greater than the threshold
+    features_to_remove = np.where(max_values > threshold)[0]
+
+    # Remove features with high maximum value from the matrix
+    for feature_label in features_to_remove:
+        matrix[labeled_features == (feature_label + 1)] = 0  # Set feature pixels to 0
+
+    return matrix
+
+#%%
+
+endGoal = FinalClearance(finalMags, threshold=1000)
+
+plt.imshow(endGoal)
+# %%
+
+#trying to save to a fits file to 
+mags = fits.PrimaryHDU(endGoal)
+
+# Create a HDUList to contain the HDU
+magList = fits.HDUList([mags])
+
+# Define the name of the FITS file
+filename = 'snapshotgalaxies.fits'
+
+# Write the HDUList to a new FITS file
+magList.writeto(filename, overwrite=True)
+#this plot looks pretty good
+
+# %%
+
+def galaxyNum(matrix):
+    # Label connected components of features
+    labeled_features = measure.label(matrix != 0)
+
+    # Count the number of unique labels (excluding 0, which represents the background)
+    num_features = len(np.unique(labeled_features)) - 1
+
+    return num_features
+
+# %%
+
+gCount = galaxyNum(endGoal)
+
+print(gCount)
+
+# %%
 
