@@ -84,12 +84,13 @@ masked = masker(pixelvalues, mu)
 plt.figure(figsize = (10, 10))
 plt.imshow(masked, cmap = 'gray')
 
+
 # %%
 
 import skimage as sk
 from skimage import measure, morphology
-#remember to import stuff from astrocode
 
+#remember to import stuff from astrocode
 #%%
 def skimmyging(data, cutoff, area):
     pixelvalues_cropped_01 = masker(data, cutoff)
@@ -116,10 +117,188 @@ def skimmyging(data, cutoff, area):
 
 #applying skimmyging to our data with loose params
 data = pixelvalues
-cutoff = mu
+std = params[3]
+cutoffSet = mu + 3.5 * std
 area = 1900
 
-skimmyging(data, mu + 3.5 * params[3], area)
+skimmyging(data, cutoffSet, area)
+
+#%%
+
+# I want to go back to the og data without the hot stuff
+def skimmyging_with_change_indicator(data, cutoff, area):
+    # Apply the mask to identify bright sources
+    pixelvalues_cropped_01 = masker(data, cutoff)
+    
+    # Label the objects in the masked image
+    label_image, num_features = measure.label(pixelvalues_cropped_01, background=0, return_num=True)
+    
+    # Initialize the change indicator array with zeros
+    change_indicator = np.zeros(data.shape, dtype=int)
+    
+    # Measure properties of labeled objects
+    regions = measure.regionprops(label_image)
+
+    for region in regions:
+        if region.area >= area:
+            for coordinates in region.coords:
+                # Set pixels of this region to 0 in the original data
+                data[coordinates[0], coordinates[1]] = 0
+                # Mark the change in the change indicator array
+                change_indicator[coordinates[0], coordinates[1]] = 1
+
+    # Optionally, you can visualize the change_indicator array
+    plt.imshow(change_indicator, cmap='gray')
+    # plt.show()
+
+    return data, change_indicator
+
+skim_data, change_indicator = skimmyging_with_change_indicator(pixelvalues, mu + 3*std, 1850)
+
+#%%
+
+def compare(data, indicator):
+    
+    for i in range(len(data)):
+        for j in range(len(data[i])):
+            if indicator[i][j]==1:
+                data[i][j] = 0
+    return data
+
+no_blooming_bg = compare(pixelvalues, change_indicator)
+#plotting this isn't too nice
+
+#%%
+#trying to save to a fits file to 
+hdu = fits.PrimaryHDU(no_blooming_bg)
+
+# Create a HDUList to contain the HDU
+hdulist = fits.HDUList([hdu])
+
+# Define the name of the FITS file
+filename = 'no_blooming_bg.fits'
+
+# Write the HDUList to a new FITS file
+hdulist.writeto(filename, overwrite=True)
+#this plot looks pretty good
+
+# %%
+
+# impor the data 
+noBloomBack = fits.open('no_blooming_bg.fits')
+
+noBloomValues = noBloomBack[0].data
 
 
 # %%
+
+# take a snapshot for now, for simplicity
+reducedImage  = noBloomValues[:200, :200]
+
+# threshold to remove background, identify indicies where this is true
+indicesReduce = reducedImage > mu + 3 * std
+
+# threshold to keep background only, remove galaxies
+backIndex = reducedImage <= mu + 3 * std
+
+# %%
+
+def extractor(matrix, indices):
+    extracted_values = np.zeros_like(matrix)
+    
+    # Assign the values at the positions where boolean_indices is True to the corresponding positions in the new matrix
+    extracted_values[indices] = matrix[indices]
+
+    return extracted_values
+
+def extractorNonBool(matrix, indices):
+    # Create a new matrix of zeros with the same shape as the original matrix
+    extracted_values = np.zeros_like(matrix)
+    
+    # Extract row and column indices from the 'indices' array
+    row_indices, col_indices = indices[:, 0], indices[:, 1]
+    
+    # Assign the values at the specified indices to the corresponding positions in the new matrix
+    extracted_values[row_indices, col_indices] = matrix[row_indices, col_indices]
+    
+    return extracted_values
+
+def extractorBackground(matrix, indices, setValue):
+    # Create a new matrix of zeros with the same shape as the original matrix
+    matOut = np.zeros_like(matrix)
+    
+    matOut += matrix
+    # Extract row and column indices from the 'indices' array
+    row_indices, col_indices = indices[:, 0], indices[:, 1]
+    
+    # Assign the values at the specified indices to the corresponding positions in the new matrix
+    matOut[row_indices, col_indices] = setValue
+    
+    return matOut
+
+# extract the background free galaxies, non-binarised dataset
+backLessGalaxy = extractor(reducedImage, indicesReduce)
+
+#extract only background, without galaxies, non binarised dataset
+backWithOnly = extractor(reducedImage, backIndex)
+
+
+# %% 
+
+boolReduce = np.array(indicesReduce).astype(int)
+boolBack = np.array(backIndex).astype(int)
+
+plt.imshow(boolBack)
+
+# %%
+def lonelyRemove(binary_array):
+    # Label connected components
+    labeled_array, num_features = measure.label(binary_array, connectivity=2, return_num=True)
+
+    # Count sizes of each connected component
+    sizes = np.bincount(labeled_array.ravel())
+
+    # Get indices of components with size 1 (lone elements)
+    lone_element_indices = np.where(sizes == 1)[0]
+
+    # Remove lone elements from labeled array
+    for idx in lone_element_indices:
+        labeled_array[labeled_array == idx] = 0
+
+    # Reconstruct binary array without lone elements
+    filtered_binary_array = labeled_array > 0
+
+    non_lone_positions = np.argwhere(filtered_binary_array)
+
+    return filtered_binary_array, non_lone_positions
+
+
+# %%
+
+# positions is the indicies for objects that are not hot-pixels
+filtered, positions = lonelyRemove(boolReduce)
+
+cleanBackGalaxy = extractorNonBool(backLessGalaxy, positions)
+
+plt.figure(figsize=(10, 10))
+plt.imshow(cleanBackGalaxy)
+
+
+# %%
+
+inverted_filter= np.logical_not(filtered)
+
+plt.imshow(inverted_filter)
+
+zeroIndices = np.argwhere((inverted_filter & (boolBack == 0)))
+
+# %%
+
+cleanBackOnly = extractorBackground(backWithOnly, zeroIndices, mu)
+
+plt.imshow(cleanBackOnly)
+
+# %%
+
+
+
