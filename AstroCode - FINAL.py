@@ -385,44 +385,91 @@ def SequentialImageProcessor(data, backgroundBounds, starBounds, dustBounds,
 
     magList.writeto(name, overwrite=True)
 
-    gCount = galaxyNum(endItAll)
+    galaxyCount = galaxyNum(endItAll)
 
-    print(gCount)
+    print(galaxyCount)
 
-    return endItAll, gCount, ObjectPositions
+    return endItAll, galaxyCount, ObjectPositions
 
-
-# %%
-
-galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu + 3 * std, mu + 3 * std + 1000, mu + 3 * std + 30,  mu, 12, 'TestPLS')
 
 # %%
 
-plt.imshow(galaxyMags)
-plt.title('Processed Image')
-plt.colorbar(label = 'Counts')
+# mess around with 'dustBounds' parameter to get a propper result
+
+# without it theres to much random noise/dust/error causing readings
+
+# so far, 20 seems the best, preserving most dim galaxies while removing
+# almost all the noise induced by the massive star
+
+# this however, only produces around 3101 galaxies
+galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu + 3 * std, mu + 3 * std + 1000, mu + 3 * std + 20,  mu, 12, 'TestPLS')
+
 
  #%%
 
-with fits.open('mosaic.fits') as hdul:
-    # Get the header of the primary HDU (Header/Data Unit)
-    header = hdul[0].header
+def FluxCalibration(inputMatrix):
 
-zeropoint  = header['MAGZPT']
-errorZeroPoint = header['MAGZRR']
+    with fits.open('mosaic.fits') as hdul:
+        # Get the header of the primary HDU (Header/Data Unit)
+        header = hdul[0].header
 
-def magEq(counts):
-    if counts == 0:
-        return 0
-     
-    else:
-        return 25 - 2.5 * np.log10(counts)
+    zeropoint  = header['MAGZPT']
+    errorZeroPoint = header['MAGZRR']
 
-vectorFunc = np.vectorize(magEq)
+    def magEq(counts):
+        if counts == 0:
+            return 0
+        else:
+            return zeropoint - 2.5 * np.log10(counts)
 
-magCalibrated = vectorFunc(galaxyMags)
+    vectorFunc = np.vectorize(magEq)
 
-plt.imshow(magCalibrated)
-plt.colorbar(label = 'Flux')
+    magCalibrated = vectorFunc(inputMatrix)
+
+    return magCalibrated
+
+def avgMags(matrix):
+
+    labeled_matrix = measure.label(matrix != 0, connectivity=2)
+
+    avg_magnitudes = []
+    for region in measure.regionprops(labeled_matrix, intensity_image=matrix):
+        avg_magnitude = region.mean_intensity
+        avg_magnitudes.append(avg_magnitude)
+
+    return np.array(avg_magnitudes)
+
+def FinalPropagations(inputData):
+    calibratedInfo = FluxCalibration(inputData)
+    magnitudes = avgMags(calibratedInfo)
+
+    freq, bins = np.histogram(magnitudes, bins = 75)
+    mid = (bins[1:] + bins[:-1]) / 2
+
+    cumulativeSum = np.cumsum(freq)
+    logCumSum = np.log(cumulativeSum)  
+    normalised = logCumSum/logCumSum[-1] 
+
+    figure, axes = plt.subplots(1, 2, figsize = (20, 15))
+    axes[0].plot(mid, normalised, 'x', color = 'black')
+    axes[1].plot(mid, freq, 'o', color = 'blue')
+
+    axes[0].grid(True)
+    axes[1].grid(True)
+
+    axes[0].set_title('Cumulative Number Distribution')
+    axes[1].set_title('Number Distribution')
+
+    axes[0].set_xlabel('Magnitude')
+    axes[0].set_ylabel('log($N(m)/N$)')
+
+    axes[1].set_xlabel('Magnitude')
+    axes[1].set_ylabel('$N(m)$')
+    return magnitudes, mid, freq, logCumSum
+
+# %%
+
+mags, binnedMagnitudes, counter, cumulativeSum = FinalPropagations(galaxyMags)
+
 
  #%%
