@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 from scipy.stats import skewnorm
 from scipy.optimize import curve_fit
 
+import skimage as sk
+from skimage import measure
+
 #%%
 #loading in data
 hdulist = fits.open("mosaic.fits")
@@ -56,85 +59,35 @@ def masker(data, cutoff):
                 mask_arr[i][j] = 1
     return mask_arr
 
-# Test data with varying lengths
-
-testdata = [[0, 0, 1, 2, 5, 1.1, 0], [2, 1, 3, 0, 0, 0.9], [2, 0, 1]]
-
-
-# Apply the mask function
-test1 = masker(testdata, 1)
-
-
-#%%
-
-#converting to flux
-#from header we see gain is 3.1, lab dude said flux = counts*gain/sattime
 gain = 3.1
 x_time = 720
-
-def flux(data, x_time, gain):
-    flux = data*gain/x_time
-    return flux
-
-# %%
-
 mu = params[2]
-
-masked = masker(pixelvalues, mu)
-plt.figure(figsize = (10, 10))
-plt.imshow(masked, cmap = 'gray')
-
-
-# %%
-
-import skimage as sk
-from skimage import measure, morphology
-
-#remember to import stuff from astrocode
-#%%
-def skimmyging(data, cutoff, area):
-    pixelvalues_cropped_01 = masker(data, cutoff)
-    #binning of objects of area greater than 1800
-    # Step 1: Label the objects in the image
-    label_image, num_features = measure.label(pixelvalues_cropped_01, background=0, return_num=True)
-
-    # Step 2: Measure properties of labeled objects
-    regions = measure.regionprops(label_image)
-
-    # Step 3: Identify objects with 1800 or more pixels and set their pixels to 0
-    for region in regions:
-        if region.area >= area:
-            # Set pixels of this region to 0 in the original image
-            for coordinates in region.coords:
-                pixelvalues_cropped_01[coordinates[0], coordinates[1]] = 0
-
-    # If you want to create a modified image where the identified objects are removed,
-    # you can use the label_image to mask the original image.
-    modified_image = np.where(label_image == 0, 0, pixelvalues_cropped_01)
-
-    plt.imshow(modified_image, cmap = 'gray')
-    plt.show()
+std = params[3]
 
 #applying skimmyging to our data with loose params
 data = pixelvalues
 std = params[3]
-cutoffSet = mu + 3.5 * std
-area = 1900
+cutoffSet = mu + 3 * std
+Apass = 1800
 
-skimmyging(data, cutoffSet, area)
 
 #%%
 
+# THIS IS CONFIRM GOOD SHIT
 # I want to go back to the og data without the hot stuff
 def skimmyging_with_change_indicator(data, cutoff, area):
+
+    # Create a copy of the data to work with
+    storage = np.copy(data)
+    
     # Apply the mask to identify bright sources
-    pixelvalues_cropped_01 = masker(data, cutoff)
+    pixelvalues_cropped_01 = masker(storage, cutoff)
     
     # Label the objects in the masked image
     label_image, num_features = measure.label(pixelvalues_cropped_01, background=0, return_num=True)
     
     # Initialize the change indicator array with zeros
-    change_indicator = np.zeros(data.shape, dtype=int)
+    change_indicator = np.zeros(storage.shape, dtype=int)
     
     # Measure properties of labeled objects
     regions = measure.regionprops(label_image)
@@ -143,20 +96,21 @@ def skimmyging_with_change_indicator(data, cutoff, area):
         if region.area >= area:
             for coordinates in region.coords:
                 # Set pixels of this region to 0 in the original data
-                data[coordinates[0], coordinates[1]] = 0
+                storage[coordinates[0], coordinates[1]] = 0
                 # Mark the change in the change indicator array
                 change_indicator[coordinates[0], coordinates[1]] = 1
 
     # Optionally, you can visualize the change_indicator array
-    plt.imshow(change_indicator, cmap='gray')
-    # plt.show()
+    plt.imshow(change_indicator, cmap = 'gray')
+    plt.show()
 
-    return data, change_indicator
+    return storage, change_indicator
 
-skim_data, change_indicator = skimmyging_with_change_indicator(pixelvalues, mu + 3*std, 1850)
+skim_data, changer = skimmyging_with_change_indicator(pixelvalues, cutoffSet, 1850)
 
 #%%
 
+# THIS IS ALSO GOOD
 def compare(data, indicator):
     
     for i in range(len(data)):
@@ -165,11 +119,12 @@ def compare(data, indicator):
                 data[i][j] = 0
     return data
 
-no_blooming_bg = compare(pixelvalues, change_indicator)
+no_blooming_bg = compare(pixelvalues, changer)
 #plotting this isn't too nice
 
 #%%
 #trying to save to a fits file to 
+# THIS IS GOOD
 hdu = fits.PrimaryHDU(no_blooming_bg)
 
 # Create a HDUList to contain the HDU
@@ -185,11 +140,10 @@ hdulist2.writeto(filename, overwrite=True)
 
 # %%
 
-
 # PHOTOMETRY SECTION BEGINS HERE
 
+# THIS IS GOOD
 def extractor(matrix, indices):
-
 
     # This for query-generated indices
     # the indices is usually a n x n matrix which is Boolean
@@ -199,6 +153,7 @@ def extractor(matrix, indices):
 
     return extracted_values
 
+# THIS IS GOOD
 def extractorNonBool(matrix, indices):
     
     # the same but for n x 2 arrays with x and y indices for each column
@@ -210,6 +165,7 @@ def extractorNonBool(matrix, indices):
     
     return extracted_values
 
+# THIS IS GOOD
 def extractorBackground(matrix, indices, setValue):
 
     # Some issues when implementing for background, where the matrix was
@@ -224,6 +180,7 @@ def extractorBackground(matrix, indices, setValue):
     
     return matOut
 
+# THIS LOOKS GOOD
 def lonelyRemove(binary_array):
     # Label connected components
     labeled_array, num_features = measure.label(binary_array, connectivity=2, return_num=True)
@@ -234,22 +191,24 @@ def lonelyRemove(binary_array):
     # Get indices of components with size 1 (lone elements)
     lone_element_indices = np.where(sizes == 1)[0]
 
-    # Remove lone elements from labeled array
     for idx in lone_element_indices:
         labeled_array[labeled_array == idx] = 0
 
-    # Reconstruct binary array without lone elements
     filtered_binary_array = labeled_array > 0
 
     non_lone_positions = np.argwhere(filtered_binary_array)
 
     return filtered_binary_array, non_lone_positions
 
+# IM NOT SURE ABOUT THIS FUNCTION ONLY
+# THIS MIGHT HAVE SOME PROBLEMS - DOES NOT
+
+
 def FinalClearance(matrix, threshold, threshold2):
-    # Label connected components of features
+
     labeled_features = measure.label(matrix != 0)
 
-    # Calculate maximum value within each feature
+
     max_values = []
     for props in measure.regionprops(labeled_features):
         max_value = np.max(matrix[props.coords[:, 0], props.coords[:, 1]])
@@ -257,13 +216,13 @@ def FinalClearance(matrix, threshold, threshold2):
 
     max_values = np.array(max_values)
 
-    # Find features with maximum value greater than the threshold
-    features_to_remove = np.where(max_values > threshold)[0]
-    features_to_remove = np.append(features_to_remove, np.where(max_values < threshold2))
 
-    # Remove features with high maximum value from the matrix
+    features_to_remove = np.where(max_values > threshold)[0]
+    features_to_remove = np.append(features_to_remove, np.where(max_values < threshold2)[0])
+
+
     for feature_label in features_to_remove:
-        matrix[labeled_features == (feature_label + 1)] = 0  # Set feature pixels to 0
+        matrix[labeled_features == (feature_label + 1)] = 0  
 
     labeled_remaining = measure.label(matrix != 0)
     remaining_indices = np.argwhere(labeled_remaining)
@@ -283,18 +242,17 @@ def combinedRemove(binaryArray, matrix, upperBound, lowerBound):
 
     return cleaned_matrix, final_matrix, non_lone_positions
 
+# THERE IS A PROBLEM HERE PROBABLY
 
 def medianBack(matrix, feature_value=0, annulus_width=12):
-    # Label connected components of features
+    
     labeled_features = measure.label(matrix == feature_value)
 
-    # Calculate the median value for each feature
     medians = []
     for props in measure.regionprops(labeled_features):
-        # Get the bounding box coordinates for the current feature
+        
         min_row, min_col, max_row, max_col = props.bbox
 
-        # Expand the bounding box to form an annulus with a width of annulus_width
         min_row = max(0, min_row - annulus_width // 2)
         max_row = min(matrix.shape[0], max_row + annulus_width // 2)
         min_col = max(0, min_col - annulus_width // 2)
@@ -309,23 +267,24 @@ def medianBack(matrix, feature_value=0, annulus_width=12):
 
         # Calculate the median of the annulus values and append to the list
         medians.append(np.median(medianMetrics))
-
+    
     return medians
 
-def magDetermine(matrix, median_values, threshold):
-    # Create a copy of the input matrix to avoid modifying the original data
+# MAGNITUDE DETERMINE IS ALL GOOD
+def magDetermine(matrix, median_values):
+    
     matrix_copy = np.copy(matrix).astype(float)
 
-    # Label connected components of features based on the condition
-    labeled_features = measure.label(matrix > threshold)
+    labeled_features = measure.label(matrix != 0)
 
-    # Subtract the corresponding median value from each feature region
     for props, median_value in zip(measure.regionprops(labeled_features), median_values):
-        # Get the bounding box coordinates for the current feature
-        min_row, min_col, max_row, max_col = props.bbox
-
-        # Subtract the median value from the feature region
-        matrix_copy[min_row:max_row, min_col:max_col][labeled_features[min_row:max_row, min_col:max_col] == props.label] -= median_value
+        
+        # Get the coordinates of the feature region
+        coords = props.coords
+        
+        # Subtract the median value only from pixels within the feature region
+        for coord in coords:
+            matrix_copy[coord[0], coord[1]] -= median_value
 
     return matrix_copy
 
@@ -338,18 +297,12 @@ def galaxyNum(matrix):
 
     return num_features
 
-
-
- #%%
-
-
 # lets streamline this whole process for some greater clarity in how we
 # arrive at the final result, and then quickly put it all into one
 # function to simplify the whole process
 
-noBloomBack = fits.open('no_blooming_bg.fits')
-noBloomValues = noBloomBack[0].data
-reducedImage  = noBloomValues
+noBloomValues = no_blooming_bg
+
 
 def SequentialImageProcessor(data, backgroundBounds, starBounds, dustBounds, 
                              meanBackground, annulusWidth, filename):
@@ -372,10 +325,11 @@ def SequentialImageProcessor(data, backgroundBounds, starBounds, dustBounds,
 
     countAdjustment = medianBack(cleanBackground, feature_value=0, annulus_width=annulusWidth)
 
-    adjustedGalaxyMagnitudes = magDetermine(cleanCountGalaxy, countAdjustment, 
-                                            backgroundBounds)
+    adjustedGalaxyMagnitudes = magDetermine(cleanCountGalaxy, countAdjustment)
     
     endItAll = np.copy(adjustedGalaxyMagnitudes)
+
+    countsError = np.sqrt(endItAll)
 
     mags = fits.PrimaryHDU(endItAll)
 
@@ -391,22 +345,6 @@ def SequentialImageProcessor(data, backgroundBounds, starBounds, dustBounds,
 
     return endItAll, galaxyCount, ObjectPositions
 
-
-# %%
-
-# mess around with 'dustBounds' parameter to get a propper result
-
-# without it theres to much random noise/dust/error causing readings
-
-# so far, 20 seems the best, preserving most dim galaxies while removing
-# almost all the noise induced by the massive star
-
-# this however, only produces around 3101 galaxies
-galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu + 3 * std, mu + 3 * std + 1000, mu + 3 * std + 20,  mu, 12, 'TestPLS')
-
-
- #%%
-
 def FluxCalibration(inputMatrix):
 
     with fits.open('mosaic.fits') as hdul:
@@ -420,7 +358,8 @@ def FluxCalibration(inputMatrix):
         if counts == 0:
             return 0
         else:
-            return zeropoint - 2.5 * np.log10(counts)
+            flux = 3.1 * counts/720
+            return zeropoint - 2.5 * np.log10(flux, dtype=float)
 
     vectorFunc = np.vectorize(magEq)
 
@@ -428,30 +367,45 @@ def FluxCalibration(inputMatrix):
 
     return magCalibrated
 
-def avgMags(matrix):
+def countSum(image_data):
+    labeled_image = measure.label(image_data != 0)
 
-    labeled_matrix = measure.label(matrix != 0, connectivity=2)
+    sum_of_values_per_feature = []
 
-    avg_magnitudes = []
-    for region in measure.regionprops(labeled_matrix, intensity_image=matrix):
-        avg_magnitude = region.mean_intensity
-        avg_magnitudes.append(avg_magnitude)
+    for prop in measure.regionprops(labeled_image):
+        min_row, min_col, max_row, max_col = prop.bbox
 
-    return np.array(avg_magnitudes)
+        label = prop.label
+
+        region = image_data[min_row:max_row, min_col:max_col]
+
+        sum_of_values = np.sum(region)
+
+        sum_of_values_per_feature.append([label, sum_of_values])
+
+    return sum_of_values_per_feature
 
 def FinalPropagations(inputData):
-    calibratedInfo = FluxCalibration(inputData)
-    magnitudes = avgMags(calibratedInfo)
+    sums = countSum(inputData)
+    sums = np.array(sums)
+    calibratedInfo = FluxCalibration(sums[:, 1])
 
-    freq, bins = np.histogram(magnitudes, bins = 75)
+
+    freq, bins = np.histogram(calibratedInfo, bins = 150)
     mid = (bins[1:] + bins[:-1]) / 2
 
-    cumulativeSum = np.cumsum(freq)
-    logCumSum = np.log(cumulativeSum)  
-    normalised = logCumSum/logCumSum[-1] 
+    calibratedInfo = sorted(calibratedInfo)
+
+    def CDFFINDER(X):
+        return np.count_nonzero(calibratedInfo < X)
+    
+    vals = np.linspace(min(calibratedInfo), max(calibratedInfo), 400, endpoint = True)
+    
+    cdf = np.array([CDFFINDER(X) for X in vals])
+    logcdf = np.log10(cdf, dtype = float)
 
     figure, axes = plt.subplots(1, 2, figsize = (20, 15))
-    axes[0].plot(mid, normalised, 'x', color = 'black')
+    axes[0].plot(vals, logcdf, 'x', color = 'black')
     axes[1].plot(mid, freq, 'o', color = 'blue')
 
     axes[0].grid(True)
@@ -461,15 +415,36 @@ def FinalPropagations(inputData):
     axes[1].set_title('Number Distribution')
 
     axes[0].set_xlabel('Magnitude')
-    axes[0].set_ylabel('log($N(m)/N$)')
+    axes[0].set_ylabel('log($N(m)$)')
 
     axes[1].set_xlabel('Magnitude')
     axes[1].set_ylabel('$N(m)$')
-    return magnitudes, mid, freq, logCumSum
+    return sums, mid, freq, logcdf
+
+
+# %%
+
+galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu + 3 * std, 50000, mu + 3 * std + 30,  mu, 12, 'FinalFITS')
 
 # %%
 
 mags, binnedMagnitudes, counter, cumulativeSum = FinalPropagations(galaxyMags)
 
+# %%
 
- #%%
+# def ParameterChecker(stdMultiple, lowerBound, annulus):
+#     galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu + stdMultiple * std, mu + 3 * std + 1000, mu + 3 * std + lowerBound,  mu, annulus, 'FinalFITS')
+#     mags, binnedMagnitudes, counter, cumulativeSum = FinalPropagations(galaxyMags)
+
+#     func, covariance = np.polyfit(binnedMagnitudes, cumulativeSum, 1, cov = True)
+#     plotter = np.poly1d(func)
+
+#     return plotter, binnedMagnitudes, cumulativeSum, covariance
+
+
+
+# # %%
+
+# fitFunc, xVals, cumsum, cov = ParameterChecker(3, 20, 12)
+
+# %%
