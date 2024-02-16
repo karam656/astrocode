@@ -137,7 +137,16 @@ filename = 'no_blooming_bg.fits'
 hdulist2.writeto(filename, overwrite=True)
 #this plot looks pretty good
 
+#%%
+def ideal(N, C):
+    ideal = 0.6*np.array(N) + C
+    
+    return ideal
 
+def schecter(M, alph, A):
+    schec = (np.log(10)/2.5)*A*(10**(0.4*(M)**(alph +1)))*(np.e)**(-10**(0.4*(M)))
+    return np.log10(schec)
+    
 # %%
 
 # PHOTOMETRY SECTION BEGINS HERE
@@ -189,7 +198,7 @@ def lonelyRemove(binary_array):
     sizes = np.bincount(labeled_array.ravel())
 
     # Get indices of components with size 1 (lone elements)
-    lone_element_indices = np.where(sizes == 1)[0]
+    lone_element_indices = np.where(sizes <= 5)[0]
 
     for idx in lone_element_indices:
         labeled_array[labeled_array == idx] = 0
@@ -389,25 +398,53 @@ def FinalPropagations(inputData):
     sums = countSum(inputData)
     sums = np.array(sums)
     calibratedInfo = FluxCalibration(sums[:, 1])
-
+    
 
     freq, bins = np.histogram(calibratedInfo, bins = 150)
     mid = (bins[1:] + bins[:-1]) / 2
-
+    bin_width = np.diff(bins)
     calibratedInfo = sorted(calibratedInfo)
 
     def CDFFINDER(X):
         return np.count_nonzero(calibratedInfo < X)
     
-    vals = np.linspace(min(calibratedInfo), max(calibratedInfo), 400, endpoint = True)
+    vals = np.linspace(min(calibratedInfo), max(calibratedInfo), 100, endpoint = True)
     
     cdf = np.array([CDFFINDER(X) for X in vals])
     logcdf = np.log10(cdf, dtype = float)
-
+    
     figure, axes = plt.subplots(1, 2, figsize = (20, 15))
-    axes[0].plot(vals, logcdf, 'x', color = 'black')
-    axes[1].plot(mid, freq, 'o', color = 'blue')
+    
+    #curve fitting theoretical from script, did it to linear part of data
+    csum = np.log10(np.linspace(1, len(calibratedInfo), len(calibratedInfo)))
+    p0f, cov = curve_fit(ideal, calibratedInfo[50:800], csum[50:800], p0 = (-11), maxfev = 10000)
+    
+    #x error calculation
+    #sums = np.sort(mags[:,1])
 
+    fluxpercerr = np.sqrt(vals)/vals
+    x_errperc = 0.08 + fluxpercerr
+    
+    #y error of the second plot
+    y_err1 = np.sqrt(freq) / freq  # Y-axis error calculation
+    y_err1[freq == 0] = 0
+    
+    x_err1 = bin_width/2
+    
+    #straight line fitting the linear region of our plot
+    coeffs = np.polyfit(calibratedInfo[50:800], csum[50:800], 1)
+    fitlin = np.poly1d(coeffs)
+    ydat = fitlin(calibratedInfo)
+    
+    axes[0].plot(calibratedInfo, ydat, alpha = 1, color = 'red')
+    
+    axes[0].plot(calibratedInfo, ideal(calibratedInfo, p0f), '-', alpha = 0.5, color = 'grey')
+    axes[0].plot(vals, logcdf, 'x', color = 'black')
+    
+    axes[0].errorbar(vals, logcdf, yerr = logcdf*np.sqrt(cdf)/cdf, xerr=x_errperc  , fmt = 'x', color = 'black', capsize = 5)
+    
+    axes[1].errorbar(mid, freq, xerr = x_err1, yerr = y_err1*freq, fmt = 'o', color = 'blue', capsize = 5)
+    
     axes[0].grid(True)
     axes[1].grid(True)
 
@@ -419,7 +456,7 @@ def FinalPropagations(inputData):
 
     axes[1].set_xlabel('Magnitude')
     axes[1].set_ylabel('$N(m)$')
-    return sums, mid, freq, logcdf
+    return sums, mid, freq, logcdf, vals
 
 
 # %%
@@ -428,7 +465,7 @@ galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu 
 
 # %%
 
-mags, binnedMagnitudes, counter, cumulativeSum = FinalPropagations(galaxyMags)
+mags, binnedMagnitudes, counter, cumulativeSum, vals = FinalPropagations(galaxyMags)
 
 # %%
 
@@ -448,3 +485,40 @@ mags, binnedMagnitudes, counter, cumulativeSum = FinalPropagations(galaxyMags)
 # fitFunc, xVals, cumsum, cov = ParameterChecker(3, 20, 12)
 
 # %%
+xdata = vals
+ydata = cumulativeSum
+
+def schechter1(M, phi_star, M_star, alpha):
+    factor = 0.4 * np.log(10) * phi_star
+    exponent = 10**(0.4 * (M_star - M))
+    return factor * exponent**(alpha + 1) * np.exp(-exponent)
+
+# Since ydata seems to be in a log scale (given the context and values), we'll fit to the log of the Schechter
+def log_schechter(M, phi_star, M_star, alpha):
+    return np.log10(schechter1(M, phi_star, M_star, alpha))
+
+# Initial guesses for Schechter function parameters
+phi_star_guess = 1e-3
+M_star_guess = -20
+alpha_guess = -1.0
+
+# Fit the Schechter function to the data
+params, covariance = curve_fit(log_schechter, xdata, ydata, p0=[phi_star_guess, M_star_guess, alpha_guess], maxfev = 10000)
+
+# Extract the best-fit parameters
+phi_star_fit, M_star_fit, alpha_fit = params
+
+# Generate fitted curve over a broad range of x values for plotting
+x_fit = np.linspace(np.min(xdata), np.max(xdata), 1000)
+y_fit = log_schechter(x_fit, phi_star_fit, M_star_fit, alpha_fit)
+
+# Plot the data and the Schechter function fit
+plt.figure(figsize=(10, 6))
+plt.scatter(xdata, ydata, label='Data', color='blue', alpha=0.6, edgecolor='none')
+plt.plot(x_fit, y_fit, label='Schechter Fit', color='red', linewidth=2)
+plt.xlabel('Relative Magnitude of Galaxies')
+plt.ylabel('Cumulative Frequency of Galaxies (Log Scale)')
+plt.legend()
+plt.title('Schechter Function Fit to Cumulative Frequency Data')
+plt.grid(True)
+plt.show()
