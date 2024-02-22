@@ -3,7 +3,7 @@ import numpy as np
 import astropy
 from astropy.io import fits
 import matplotlib.pyplot as plt
-from scipy.stats import skewnorm
+from scipy.stats import skewnorm, poisson
 from scipy.optimize import curve_fit
 
 import skimage as sk
@@ -31,13 +31,15 @@ selected_pixels = pixelvalues[mask]
 def skewed_gaussian(x, amp, a, mean, std):
     return amp * skewnorm.pdf(x, a, loc=mean, scale=std)
 
-hist, bins = np.histogram(selected_pixels, bins = 1000)
+hist, bins = np.histogram(selected_pixels, bins = 1000, density=True)
 
-params, covariance = curve_fit(skewed_gaussian, bins[:-1], hist, p0 = (900000, 1.5, 3425, np.sqrt(3425)), maxfev = 100000)
+midpoints = (bins[1:] - bins[:-1])/2
+
+params, covariance = curve_fit(skewed_gaussian, bins[:-1], hist, p0 = (900000, 1.4, 3425, np.sqrt(3425)), maxfev = 100000)
 
 plt.figure(figsize=(10, 10))
 plt.bar(bins[:-1], hist, width = np.diff(bins), edgecolor='black', label = 'Data ')
-plt.plot(bins[:-1], 1.3 * skewed_gaussian(bins[:-1], *params), label = 'Gauss fit', color = 'red')
+plt.plot(bins[:-1], skewed_gaussian(bins[:-1], *params), label = 'Gauss fit', color = 'red')
 plt.xlabel('Value')
 plt.ylabel('Frequency')
 plt.title('Histogram')
@@ -144,14 +146,6 @@ def ideal(N, C):
     
     return ideal
 
-def schechter1(M, phi_star, M_star, alpha):
-    factor = 0.4 * np.ma.log(10) * phi_star
-    exponent = 10**(0.4 * (M_star - M))
-    return factor * exponent**(alpha + 1) * np.exp(-exponent)
-
-# Since ydata seems to be in a log scale (given the context and values), we'll fit to the log of the Schechter
-def log_schechter(M, phi_star, M_star, alpha):
-    return np.ma.log10(schechter1(M, phi_star, M_star, alpha))
 # %%
 
 # PHOTOMETRY SECTION BEGINS HERE
@@ -399,16 +393,29 @@ def countSum(image_data):
 
     return sum_of_values_per_feature
 
+
+def schechterFinal(magnitude, phi_star, m_star, alpha):
+    return phi_star * np.exp(-10**(0.4 * (magnitude - m_star))) * (10**(0.4 * (magnitude - m_star)))**(alpha+1)
+
+
 def FinalPropagations(inputData):
+
+    # ------------------------------------------------------------
+    # Actual Data Procesing and Value Propagations
     sums = countSum(inputData)
     sums = np.array(sums)
     calibratedInfo = FluxCalibration(sums[:, 1])
-    
 
+    # ------------------------------------------------------------
+    # extracting relevant information to see the actual number distributions
     freq, bins = np.histogram(calibratedInfo, bins = 50)
+    freqNormalised, bins = np.histogram(calibratedInfo, bins = 50, density = True)
+    
     mid = (bins[1:] + bins[:-1]) / 2
-    bin_width = np.diff(bins)
+    bin_width = np.diff(bins)[0]
     calibratedInfo = sorted(calibratedInfo)
+
+    # ------------------------------------------------------------
 
     def CDFFINDER(X):
         return np.count_nonzero(calibratedInfo < X)
@@ -416,76 +423,85 @@ def FinalPropagations(inputData):
     vals = np.linspace(min(calibratedInfo), max(calibratedInfo), 30, endpoint = True)
     
     cdf = np.array([CDFFINDER(X) for X in vals])
+
+    # discrete, smaller intervalled cumulative sum propagation
     logcdf = np.ma.log10(cdf, dtype = float)
-    
-    print(cdf)
-    figure, axes = plt.subplots(1, 2, figsize = (20, 15))
-    
-    #curve fitting theoretical from script, did it to linear part of data
+
+    #csum used to have same dimensions as calibrated info for easy calculations
     csum = np.ma.log10(np.linspace(1, len(calibratedInfo), len(calibratedInfo)))
-    p0f, cov = curve_fit(ideal, calibratedInfo[50:800], csum[50:800], p0 = (-11), maxfev = 10000)
-    #schecter fitting
-    xdata = calibratedInfo[:800]
-    ydata = csum[:800]
 
-    phi_star_guess = 1e-3
-    M_star_guess = -20
-    alpha_guess = -1.0
 
-    # Fit the Schechter function to the data
-    params, covariance = curve_fit(log_schechter, xdata, ydata, p0=[phi_star_guess, M_star_guess, alpha_guess], maxfev = 10000)
-
-    # Extract the best-fit parameters
-    phi_star_fit, M_star_fit, alpha_fit = params
-
-    #Generate fitted curve over a broad range of x values for plotting
-    x_fit = np.linspace(np.min(xdata), np.max(xdata), 1000)
-    y_fit = log_schechter(x_fit, phi_star_fit, M_star_fit, alpha_fit)   
-    #x error calculation
-    #sums = np.sort(mags[:,1])
+    # ------------------------------------------------------------
+    # Error Propagation
 
     fluxpercerr = np.sqrt(vals)/vals
     x_errperc = np.sqrt(0.08 ** 2 + fluxpercerr ** 2)
     
     #y error of the second plot
+
     y_err1 = np.sqrt(freq) / freq  # Y-axis error calculation
     y_err1[freq == 0] = 0
     
-    x_err1 = bin_width/2
+    x_err1 = bin_width/4
     
-    labIdeal = ideal(calibratedInfo[50:800], p0f)
+    # ------------------------------------------------------------
+    # Calculating values of all our fits/linear etc, and also Doing the Curve_fitting
+    
+    # Linear Fitting - Ideal Equation from LabScript
+    p0f, cov = curve_fit(ideal, calibratedInfo[50:800], csum[50:800], p0 = (-11), maxfev = 10000)
+    labIdeal = ideal(calibratedInfo, p0f)
 
-    residuals = ((csum[50:800] - labIdeal)/np.sqrt(csum[50:800]))
-
-    chi2lab = np.sum(residuals**2)
-
-    dof = len(calibratedInfo[50:800]) - len(p0f)
-
-    reducedChi2lab = chi2lab/dof
-
-    #straight line fitting the linear region of our plot
-    coeffs, residuals, _, _, _ = np.polyfit(calibratedInfo[50:800], csum[50:800], 1, full = True)
+    # Generally Fitting a Line to Our CDF - I dont know the actual physical significance
+    coeffs, residualsPoly, _, _, _ = np.polyfit(calibratedInfo[50:800], csum[50:800], 1, full = True)
     fitlin = np.poly1d(coeffs)
     ydat = fitlin(calibratedInfo)
 
-    chi2linear = np.sum((residuals/np.sqrt(csum))**2)
 
-    dof2 = len(calibratedInfo[50:800]) - len(coeffs)
+    sXdata = mid
+    sYdata = freqNormalised
 
-    DlabValue, pValueLab = ks_2samp(csum[50:800], labIdeal)
+    schecParams, schecCov = curve_fit(schechterFinal, sXdata, sYdata, [0.001, 23.2, -1.01], maxfev = 100000)
+
+    def AmpScaler(magnitude, amp):
+        return amp * schechterFinal(magnitude, *schecParams)
+
+    finalSchec, finalCov = curve_fit(AmpScaler, mid, freq, p0 = 320, maxfev = 100000)
+
+    # ------------------------------------------------------------
+    # This is all the chi2 statistical testing
+
+    residuals = ((csum[50:800] - labIdeal[50:800])/np.sqrt(csum[50:800]))
+    chi2lab = np.sum(residuals**2)
+    dof = len(calibratedInfo[50:800]) - len(p0f)
+    reducedChi2lab = chi2lab/dof
+
+    chi2linear = np.sum((residualsPoly/np.sqrt(csum))**2)
+    dof2 = len(calibratedInfo) - len(coeffs)
+    reducedChi2linear = chi2linear/dof2
+
+    # ------------------------------------------------------------
+    # This is all the KS-2 Testing
+
+    DlabValue, pValueLab = ks_2samp(csum, labIdeal)
     print(f'Lab Equation - Fixed Gradient - KS-2 Test D : {DlabValue}, p : {pValueLab}')
 
-    DlinValue, pValueLin = ks_2samp(csum[50:800], ydat[50:800])
+    DlinValue, pValueLin = ks_2samp(csum, ydat)
     print(f'Linear Fit - Variable Gradient - KS-2 Test D : {DlinValue}, p : {pValueLin}')
 
+    # DschecValue, pSchecValue = ks_2samp(csum, SchechterFunction(calibratedInfo, *pGeneralSchec))
+    # print(f'Schecter Function KS-2 Test D : {DschecValue}, p : {pSchecValue}')
 
-    reducedChi2linear = chi2linear/dof2
-    
+    # ----------------------------------------------------------
+    # This is for all the plotting 
+
+    figure, axes = plt.subplots(1, 2, figsize = (20, 15))
+
     axes[0].plot(calibratedInfo, ydat, alpha = 1, color = 'red', label='Linear Fit')
     axes[0].plot(calibratedInfo, ideal(calibratedInfo, p0f), '-', alpha = 0.5, color = 'grey', label='Ideal Equation (2)')    
     axes[0].errorbar(vals, logcdf, yerr = logcdf*np.sqrt(cdf)/cdf, xerr=x_errperc , fmt = 'x', color = 'black', capsize = 5, label = 'Data')
-    axes[0].plot(calibratedInfo, log_schechter(calibratedInfo,phi_star_fit, M_star_fit, alpha_fit), label='Schechter Fit', color='green', linewidth=2)
+    
     axes[1].errorbar(mid, freq, xerr = x_err1, yerr = y_err1*freq, fmt = 'o', color = 'blue', capsize = 5, label='Data')
+    axes[1].plot(mid, finalSchec * schechterFinal(mid, *schecParams), label = 'Schecter Fit')
     
     axes[0].grid(True)
     axes[1].grid(True)
@@ -512,60 +528,127 @@ galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu 
 
 mags, binnedMagnitudes, counter, cumulativeSum, vals, chi2lab, chi2lin = FinalPropagations(galaxyMags)
 
-# %%
-
-# def ParameterChecker(stdMultiple, lowerBound, annulus):
-#     galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu + stdMultiple * std, mu + 3 * std + 1000, mu + 3 * std + lowerBound,  mu, annulus, 'FinalFITS')
-#     mags, binnedMagnitudes, counter, cumulativeSum = FinalPropagations(galaxyMags)
-
-#     func, covariance = np.polyfit(binnedMagnitudes, cumulativeSum, 1, cov = True)
-#     plotter = np.poly1d(func)
-
-#     return plotter, binnedMagnitudes, cumulativeSum, covariance
-
-
-
-# # %%
-
-# fitFunc, xVals, cumsum, cov = ParameterChecker(3, 20, 12)
 
 # %%
-xdata = vals
-ydata = cumulativeSum
+def SchechterPropagations(inputData):
+    # ------------------------------------------------------------
+    # Actual Data Procesing and Value Propagations
+    sums = countSum(inputData)
+    sums = np.array(sums)
+    calibratedInfo = FluxCalibration(sums[:, 1])
 
-def schechter1(M, phi_star, M_star, alpha):
-    factor = 0.4 * np.log(10) * phi_star
-    exponent = 10**(0.4 * (M_star - M))
-    return factor * exponent**(alpha + 1) * np.exp(-exponent)
+    # ------------------------------------------------------------
+    # extracting relevant information to see the actual number distributions
+    freq, bins = np.histogram(calibratedInfo, bins = 50)
+    freqNormalised, bins = np.histogram(calibratedInfo, bins = 50, density = True)
+    
+    mid = (bins[1:] + bins[:-1]) / 2
+    bin_width = np.diff(bins)[0]
+    calibratedInfo = sorted(calibratedInfo)
 
-# Since ydata seems to be in a log scale (given the context and values), we'll fit to the log of the Schechter
-def log_schechter(M, phi_star, M_star, alpha):
-    return np.log10(schechter1(M, phi_star, M_star, alpha))
+    # ------------------------------------------------------------
 
-# Initial guesses for Schechter function parameters
-phi_star_guess = 1e-3
-M_star_guess = -20
-alpha_guess = -1.0
+    def CDFFINDER(X):
+        return np.count_nonzero(calibratedInfo < X)
+    
+    vals = np.linspace(min(calibratedInfo), max(calibratedInfo), 30, endpoint = True)
+    
+    cdf = np.array([CDFFINDER(X) for X in vals])
 
-# Fit the Schechter function to the data
-params, covariance = curve_fit(log_schechter, xdata, ydata, p0=[phi_star_guess, M_star_guess, alpha_guess], maxfev = 10000)
+    # discrete, smaller intervalled cumulative sum propagation
+    logcdf = np.ma.log10(cdf, dtype = float)
 
-# Extract the best-fit parameters
-phi_star_fit, M_star_fit, alpha_fit = params
+    #csum used to have same dimensions as calibrated info for easy calculations
+    csum = np.ma.log10(np.linspace(1, len(calibratedInfo), len(calibratedInfo)))
 
-# Generate fitted curve over a broad range of x values for plotting
-x_fit = np.linspace(np.min(xdata), np.max(xdata), 1000)
-y_fit = log_schechter(x_fit, phi_star_fit, M_star_fit, alpha_fit)
 
-# Plot the data and the Schechter function fit
-plt.figure(figsize=(10, 6))
-plt.scatter(xdata, ydata, label='Data', color='blue', alpha=0.6, edgecolor='none')
-plt.plot(x_fit, y_fit, label='Schechter Fit', color='red', linewidth=2)
-plt.xlabel('Relative Magnitude of Galaxies')
-plt.ylabel('Cumulative Frequency of Galaxies (Log Scale)')
-plt.legend()
-plt.title('Schechter Function Fit to Cumulative Frequency Data')
-plt.grid(True)
-plt.show()
+    # ------------------------------------------------------------
+    # Error Propagation
+
+    fluxpercerr = np.sqrt(vals)/vals
+    x_errperc = np.sqrt(0.08 ** 2 + fluxpercerr ** 2)
+    
+    #y error of the second plot
+
+    y_err1 = np.sqrt(freq) / freq  # Y-axis error calculation
+    y_err1[freq == 0] = 0
+    
+    x_err1 = bin_width/2
+    
+    # ------------------------------------------------------------
+    # Calculating values of all our fits/linear etc, and also Doing the Curve_fitting
+    
+    # Linear Fitting - Ideal Equation from LabScript
+    p0f, cov = curve_fit(ideal, calibratedInfo[50:800], csum[50:800], p0 = (-11), maxfev = 10000)
+    labIdeal = ideal(calibratedInfo, p0f)
+
+    # Generally Fitting a Line to Our CDF - I dont know the actual physical significance
+    coeffs, residualsPoly, _, _, _ = np.polyfit(calibratedInfo[50:800], csum[50:800], 1, full = True)
+    fitlin = np.poly1d(coeffs)
+    ydat = fitlin(calibratedInfo)
+
+
+    sXdata = mid
+    sYdata = freqNormalised
+
+    schecParams, schecCov = curve_fit(schechterFinal, sXdata, sYdata, [0.001, 23.2, -1.01], maxfev = 100000)
+
+    # ------------------------------------------------------------
+    # Schechter Function's CDF Calculation:
+    
+    width = np.diff(vals)[0]
+
+    PDFscaled = schechterFinal(vals, *schecParams)
+
+    CDFcheck = np.ma.log10(np.cumsum(PDFscaled * width)) + logcdf[-1]
+
+
+    # ------------------------------------------------------------
+    # This is all the chi2 statistical testing
+
+    residuals = ((csum[50:800] - labIdeal[50:800])/np.sqrt(csum[50:800]))
+    chi2lab = np.sum(residuals**2)
+    dof = len(calibratedInfo[50:800]) - len(p0f)
+    reducedChi2lab = chi2lab/dof
+
+    chi2linear = np.sum((residualsPoly/np.sqrt(csum))**2)
+    dof2 = len(calibratedInfo) - len(coeffs)
+    reducedChi2linear = chi2linear/dof2
+
+
+    # ------------------------------------------------------------
+    # This is all the KS-2 Testing
+
+    DlabValue, pValueLab = ks_2samp(csum, labIdeal)
+    print(f'Lab Equation - Fixed Gradient - KS-2 Test D : {DlabValue}, p : {pValueLab}')
+
+    DlinValue, pValueLin = ks_2samp(csum, ydat)
+    print(f'Linear Fit - Variable Gradient - KS-2 Test D : {DlinValue}, p : {pValueLin}')
+
+    DschecValue, pSchecValue = ks_2samp(logcdf, CDFcheck)
+    print(f'Schecter Function KS-2 Test D : {DschecValue}, p : {pSchecValue}')
+
+    # ----------------------------------------------------------
+    # This is for all the plotting 
+
+    plt.figure(figsize=(10, 10))
+
+    plt.plot(calibratedInfo, ydat, alpha=1, color='red', label='Linear Fit')
+    plt.plot(calibratedInfo, ideal(calibratedInfo, p0f), '-', alpha=0.5, color='grey', label='Ideal Equation (2)')    
+    plt.errorbar(vals, logcdf, yerr=logcdf*np.sqrt(cdf)/cdf, xerr=x_errperc, fmt='x', color='black', capsize=5, label='Data')
+    plt.plot(vals, CDFcheck, color = 'blue', label='Schechter Fit - CDF')
+    plt.grid(True)
+    plt.title('Cumulative Number Distribution')
+    plt.xlabel('Magnitude')
+    plt.ylabel('log($N(m)$)')
+    plt.legend()
+
+    plt.show()
+    return schecParams, schecCov
+
+# %%
+
+pS, cS = SchechterPropagations(galaxyMags)
+
 
 # %%
