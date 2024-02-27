@@ -16,9 +16,9 @@ from scipy.stats import ks_2samp
 #loading in data
 hdulist = fits.open("mosaic.fits")
 
-pixelvalues = hdulist[0].data
+pixelvalues2 = hdulist[0].data
 
-pixelvalues_cropped_horizontally = pixelvalues[:, 120:-120]
+pixelvalues_cropped_horizontally = pixelvalues2[:, 120:-120]
 
 # Crop vertically by slicing only rows from 110 to -110, keeping all columns
 # this to get rid of the image borders and noisy edge data in the image itself.
@@ -84,10 +84,8 @@ gain = 3.1
 x_time = 720
 mu = params[2]
 std = params[3]
-
 #applying skimmyging to our data with loose params
 data = pixelvalues
-std = params[3]
 cutoffSet = mu + 3 * std
 Apass = 1800
 
@@ -464,7 +462,6 @@ def schechterFinal(magnitude, phi_star, m_star, alpha):
 
 def ideal(N, C):
     ideal = 0.6*np.array(N) + C
-    
     return ideal
 
 # statistical tests, plotting, curve-fitting and many more
@@ -518,7 +515,7 @@ def FinalPropagations(inputData):
     # Calculating values of all our fits/linear etc, and also Doing the Curve_fitting
     
     # Linear Fitting - Ideal Equation from LabScript
-    p0f, cov = curve_fit(ideal, calibratedInfo[50:800], csum[50:800], p0 = (-11), maxfev = 10000)
+    p0f, cov = curve_fit(ideal, calibratedInfo[50:800], csum[50:800], p0 = (-17), maxfev = 100000)
     labIdeal = ideal(calibratedInfo, p0f)
 
     # Generally Fitting a Line to Our CDF - I dont know the actual physical significance
@@ -589,11 +586,17 @@ def FinalPropagations(inputData):
     axes[1].legend()
     return sums, mid, freq, logcdf, vals, reducedChi2lab, reducedChi2linear
 
-
-
 # %%
 
 galaxyMags, totalCount, posGalaxy = SequentialImageProcessor(no_blooming_bg, mu + 3 * std, 50000, mu + 3 * std + 30,  mu, 12, 'FinalFITS')
+
+# %%
+
+plt.figure(figsize = (10, 10), dpi = 900)
+plt.imshow(galaxyMags[1100:1300, 1000:1200])
+plt.xlabel('Pixel Coordinates (X)', fontsize = 15)
+plt.ylabel('Pixel Coordinates (Y)', fontsize = 15)
+plt.title('Processed Image Snapshot', fontsize = 15)
 
 # %%
 
@@ -632,7 +635,7 @@ def SchechterPropagations(inputData):
     #csum used to have same dimensions as calibrated info for easy calculations
     csum = np.ma.log10(np.linspace(1, len(calibratedInfo), len(calibratedInfo)))
 
-
+    
     # ------------------------------------------------------------
     # Error Propagation
 
@@ -650,7 +653,7 @@ def SchechterPropagations(inputData):
     # Calculating values of all our fits/linear etc, and also Doing the Curve_fitting
     
     # Linear Fitting - Ideal Equation from LabScript
-    p0f, cov = curve_fit(ideal, calibratedInfo[50:800], csum[50:800], p0 = (-11), maxfev = 10000)
+    p0f, cov = curve_fit(ideal, calibratedInfo[50:800], csum[50:800], p0 = (-17), maxfev = 100000)
     labIdeal = ideal(calibratedInfo, p0f)
 
     # Generally Fitting a Line to Our CDF - I dont know the actual physical significance
@@ -707,34 +710,84 @@ def SchechterPropagations(inputData):
     # ----------------------------------------------------------
     # This is for all the plotting 
 
-    plt.figure(figsize=(10, 10), dpi = 1200)
+    linearStart = 16.4
+    linearEnd = 23.8
+
+    plt.figure(figsize=(15, 10))
 
     #plt.plot(calibratedInfo, ydat, alpha=1, color='red', label='Linear Fit')
-    plt.plot(calibratedInfo, ideal(calibratedInfo, p0f), '-', alpha=0.5, color='grey', label='Lab Script Equation')    
-    plt.errorbar(vals, logcdf, yerr=logcdf*np.sqrt(cdf)/cdf, xerr=x_errperc, fmt='x', color='black', capsize=5, label='Data')
+    plt.plot(calibratedInfo, ideal(calibratedInfo, p0f), '-', alpha=0.5, color='orange', label='non-Evolution Model')    
+    plt.errorbar(vals, logcdf, yerr=logcdf*np.sqrt(cdf)/cdf, xerr=x_err1, fmt='x', color='black', capsize=3, label='Data')
     plt.plot(vals, CDFcheck, color = 'blue', linestyle = 'dashed', label='Schechter Fit - CDF')
     plt.grid(True)
+    plt.axvline(linearStart, linestyle = 'dotted', color = 'black', alpha = 0.4)
+    plt.axvline(linearEnd, linestyle = 'dotted', color = 'black', alpha = 0.4)
+    
+    why = np.linspace(0, 4.5, 20)
+    plt.fill_betweenx(why, x1 = 15.2, x2 = linearStart, color = 'blue', alpha = 0.15, label = 'Sample-Limited')
+    plt.fill_betweenx(why, x1 = linearEnd, x2 = 26, color = 'green', alpha = 0.15, label = 'CCD-Limited')
+    plt.fill_betweenx(why, x1 = linearStart, x2 = linearEnd, color = 'gray', alpha = 0.15
+                      , label = 'non-evolution Regime')
+
     plt.title('Cumulative Number Distribution', fontsize = 15)
     plt.xlabel('Magnitude', fontsize = 15, loc = 'right')
     plt.ylabel('log($N(m)$)', fontsize = 15, loc = 'top')
-    plt.legend(fontsize = 15)
+    plt.legend(fontsize = 15, loc = 'upper left')
     plt.ylim(0, 4.5)
+    plt.xticks(fontsize = 15)
+    plt.yticks(fontsize = 15)
     plt.xlim(15.2, 26)
 
     ax_small = plt.axes([0.575, 0.175, 0.30, 0.30])  # Create a smaller set of axes at the specified position within the main plot area
     ax_small.errorbar(mid, freq, yerr=y_err1*freq, xerr=x_err1, fmt='o', color='blue', label='Frequency')
-    ax_small.plot(mid, finalSchec * schechterFinal(mid, *schecParams), color = 'green', label = 'Schechter PDF')
+    ax_small.plot(mid, finalSchec * schechterFinal(mid, *schecParams), color = 'red', label = 'Schechter PDF')
     ax_small.set_title('Galaxy Number Distribution', fontsize = 15)
     ax_small.set_xlabel('Magnitude', fontsize=15, loc = 'right')
     ax_small.set_ylabel('Frequency', fontsize=15, loc = 'top')
-
+    ax_small.legend(fontsize = 15)
+    ax_small.grid()
     plt.show()
 
-    return schecParams, schecCov
+    return schecParams, schecCov, calibratedInfo
 
 # %%
 
-pS, cS = SchechterPropagations(galaxyMags)
+pS, cS, cInfo = SchechterPropagations(galaxyMags)
+
+
+# %%
+
+# COMPLETENESS ANALYSIS
+
+# USED TO FIND THE AMPLITUDE FACTOR WHEN CALCULATING ACTUAL NUMBER FROM
+# SCHECHTER FUNCTION
+def homogenous(x):
+    return 0.6 * (x - 16)
+
+
+a = np.linspace(10, 21, 50, endpoint = True)
+wA = np.diff(a)[0]
+theoCDF = homogenous(a)
+
+
+plt.plot(a, theoCDF)
+num = np.cumsum(10**theoCDF * wA)
+num[-1]
+
+# %%
+
+magi = np.linspace(min(binnedMagnitudes), 22.5, 50, endpoint = True)
+
+w = np.diff(magi)[0]
+
+PDFs = schechterFinal(magi, 1, 19.5, -1.1)
+
+CDFc = np.ma.log10(np.cumsum(PDFs * w)) + np.log10(num[-1])
+
+print(10 ** CDFc[-1])
+
+plt.plot(magi, CDFc)
+plt.xlim((16.0, 22.5))
 
 
 # %%
