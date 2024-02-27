@@ -1,5 +1,5 @@
 # Astronomical Image Processing of SWIRE Survey Dataset
-By Mukesh Dharanibalan and Karam Ramzan | CID : 02107745 and _________ | md1021@ic.ac.uk and kr521@ic.ac.uk
+By Mukesh Dharanibalan and Karam Ramzan | CID : 02107745 and 02056994 | md1021@ic.ac.uk and kr521@ic.ac.uk
 ------------------------------------
 __Project Description__:
 Short yet extensive image processing and analysis of SWIRE R-band astronomical image processing. Blooming, and star's correction are done. 
